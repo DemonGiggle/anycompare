@@ -53,11 +53,6 @@ type App struct {
 	summary     compare.Summary
 	width       int
 	height      int
-	// autoOpen triggers a jump straight into the side-by-side diff
-	// of the first differing file after the initial scan, so typing
-	// `anycompare <left> <right>` shows differences immediately.
-	// Rescans (R) never auto-open.
-	autoOpen bool
 }
 
 // NewApp builds the root model.
@@ -74,7 +69,6 @@ func NewApp(leftRoot, rightRoot string, compareOpts compare.Options, context int
 		width:       80,
 		height:      24,
 		scanning:    true,
-		autoOpen:    true,
 	}
 }
 
@@ -83,10 +77,6 @@ func (a *App) Summary() compare.Summary { return a.summary }
 
 // SetIgnoreWS seeds the initial whitespace-ignore preference.
 func (a *App) SetIgnoreWS(ignore bool) { a.ignoreWS = ignore }
-
-// SetAutoOpen enables (default) or disables the jump straight into the
-// first differing file's side-by-side diff after the initial scan.
-func (a *App) SetAutoOpen(open bool) { a.autoOpen = open }
 
 // Browser exposes the browser (for tests).
 func (a *App) Browser() *Browser { return a.browser }
@@ -157,12 +147,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.browser.ensureVisible()
 		}
 		a.browser.StatusMsg = ""
-		if a.autoOpen {
-			a.autoOpen = false
-			if cmd := a.autoOpenFirstDiff(); cmd != nil {
-				return a, cmd
-			}
-		}
 		return a, nil
 	case hashDoneMsg:
 		if msg.err != nil {
@@ -273,54 +257,6 @@ func (a *App) updateBrowserKey(key string) (tea.Model, tea.Cmd) {
 		b.ShowHelp = false
 	}
 	return a, nil
-}
-
-// autoOpenFirstDiff jumps straight into the side-by-side diff of the
-// first differing file pair after the initial scan. It prefers entries
-// flagged different, then any diffable file pair in the (differences
-// filtered) browser list. Directories, one-sided entries and symlinks
-// are not diffable. Returns nil to stay in the browser when nothing
-// diffable exists (e.g. trees are identical).
-func (a *App) autoOpenFirstDiff() tea.Cmd {
-	b := a.browser
-	if len(b.Visible) == 0 {
-		b.StatusMsg = "no differences"
-		return nil
-	}
-	pick := -1
-	for i := range b.Visible {
-		if diffable(b.Visible[i]) && b.Visible[i].State == compare.StateDifferent {
-			pick = i
-			break
-		}
-	}
-	if pick < 0 {
-		for i := range b.Visible {
-			if diffable(b.Visible[i]) {
-				pick = i
-				break
-			}
-		}
-	}
-	if pick < 0 {
-		// Differences exist but none is a file pair (e.g. only
-		// one-sided entries or directories): stay in the browser.
-		return nil
-	}
-	b.Cursor = pick
-	b.ensureVisible()
-	return a.openDiff(b.Visible[pick])
-}
-
-// diffable reports whether an entry can be opened as a file diff.
-func diffable(e compare.Entry) bool {
-	if e.Left == nil || e.Right == nil || e.IsDir() {
-		return false
-	}
-	if e.Left.IsSymlink || e.Right.IsSymlink {
-		return false
-	}
-	return true
 }
 
 // openDiff validates the selection and either shows a status message

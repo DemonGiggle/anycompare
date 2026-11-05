@@ -116,7 +116,7 @@ func TestAppOpenDiffGuards(t *testing.T) {
 	}
 }
 
-func TestAppAutoOpensFirstDiff(t *testing.T) {
+func TestAppStaysInBrowserAfterScan(t *testing.T) {
 	app := NewApp("L", "R", compare.DefaultOptions(), 3)
 	entries := []compare.Entry{
 		{Rel: "same.txt", State: compare.StateIdentical,
@@ -128,18 +128,15 @@ func TestAppAutoOpensFirstDiff(t *testing.T) {
 	}
 	m, cmd := app.Update(scanDoneMsg{entries: entries})
 	app = m.(*App)
-	if cmd == nil {
-		t.Fatal("initial scan should auto-open a diff")
+	if cmd != nil {
+		t.Fatal("initial scan should stay in the browser (no auto-open)")
 	}
-	if app.Active() != ViewDiff {
-		t.Fatal("should land in the diff view after startup")
+	if app.Active() != ViewBrowser {
+		t.Fatal("should stay in the browser after startup")
 	}
-	if app.Diff().Rel != "aaa-diff.txt" {
-		t.Fatalf("should open first differing file, got %q", app.Diff().Rel)
+	if len(app.Browser().Visible) != 2 {
+		t.Fatalf("browser should list differences, got %+v", app.Browser().Visible)
 	}
-	// A rescan must not yank the user out of the browser again.
-	m2, _ := app.Update(scanDoneMsg{entries: entries})
-	_ = m2
 }
 
 func TestAppStaysInBrowserWhenIdentical(t *testing.T) {

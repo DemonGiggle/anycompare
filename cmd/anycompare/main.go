@@ -31,7 +31,6 @@ func main() {
 		summary  = flag.Bool("summary", false, "print a plain-text comparison summary and exit (no TUI)")
 		showVer  = flag.Bool("version", false, "print version and exit")
 		ignoreWs = flag.Bool("ignore-ws", false, "ignore whitespace in file diffs initially (toggle with w)")
-		browser  = flag.Bool("browser", false, "start in the folder browser instead of jumping to the first diff")
 	)
 	var ignores ignoreList
 	flag.Var(&ignores, "ignore", "shell pattern to ignore (repeatable, e.g. -ignore '*.log' -ignore '.git/*')")
@@ -96,7 +95,6 @@ func main() {
 	app := tui.NewApp(left, right, compareOpts, *context)
 	// Seed the initial whitespace preference before the first diff loads.
 	app.SetIgnoreWS(*ignoreWs)
-	app.SetAutoOpen(!*browser)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "anycompare: %v\n", err)

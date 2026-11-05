@@ -10,12 +10,10 @@ anycompare [flags] <source-dir> <dest-dir>
 
 ## What you get
 
-- **Differences first:** typing `anycompare <source> <dest>` jumps straight
-  into a vimdiff-style side-by-side diff of the first differing file.
-  `esc` returns to the folder browser, which opens filtered to differences
-  (`=` identical rows hidden); `f` cycles filters
-  (differences/all/different/only-left/only-right). `--browser` starts
-  in the browser instead.
+- **Browser first:** typing `anycompare <source> <dest>` opens the folder
+  browser filtered to differences (`=` identical rows hidden);
+  `f` cycles filters (differences/all/different/only-left/only-right).
+  `enter` opens the selected file in a vimdiff-style side-by-side diff.
 - **Browser:** synchronized `SOURCE` and `DEST` panes, each with filenames
   and sizes, plus a centre status gutter. Files missing from one side leave
   that pane's row blank; `›` marks the selection even without colors.
