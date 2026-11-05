@@ -9,11 +9,12 @@ import (
 )
 
 func testEntries() []compare.Entry {
+	pair := &compare.FileMeta{Size: 12}
 	return []compare.Entry{
-		{Rel: "same.txt", State: compare.StateIdentical},
-		{Rel: "diff.txt", State: compare.StateDifferent},
-		{Rel: "left-only.txt", State: compare.StateOnlyLeft},
-		{Rel: "right-only.txt", State: compare.StateOnlyRight},
+		{Rel: "same.txt", State: compare.StateIdentical, Left: pair, Right: pair},
+		{Rel: "diff.txt", State: compare.StateDifferent, Left: pair, Right: pair},
+		{Rel: "left-only.txt", State: compare.StateOnlyLeft, Left: pair},
+		{Rel: "right-only.txt", State: compare.StateOnlyRight, Right: pair},
 	}
 }
 

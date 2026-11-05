@@ -2,10 +2,11 @@ package tui
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/anycompare/anycompare/internal/compare"
 )
@@ -85,7 +86,7 @@ type Browser struct {
 // NewBrowser builds an empty browser for the two roots.
 // It starts filtered to differences (non-identical rows).
 func NewBrowser(leftRoot, rightRoot string) *Browser {
-	return &Browser{LeftRoot: leftRoot, RightRoot: rightRoot, Width: 80, Height: 24, Filter: FilterChanged}
+	return &Browser{LeftRoot: leftRoot, RightRoot: rightRoot, Width: 80, Height: 24, Filter: FilterChanged, FocusLeft: true}
 }
 
 // SetEntries replaces the full entry set and reapplies filter/sort.
@@ -230,7 +231,7 @@ func (b *Browser) SortNext() string {
 }
 
 func (b *Browser) viewRows() int {
-	h := b.Height - 6 // header(3) + footer(3)
+	h := b.Height - 5 // header(3) + footer(2)
 	if h < 1 {
 		h = 1
 	}
@@ -289,18 +290,16 @@ func (b *Browser) Counts() (identical, different, onlyLeft, onlyRight int) {
 	return
 }
 
-var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
-
-func stripANSI(s string) string {
-	return ansiRe.ReplaceAllString(s, "")
-}
+func stripANSI(s string) string { return ansi.Strip(s) }
 
 // Render draws the browser for the current size.
 func (b *Browser) Render() string {
 	w := b.Width
-	if w < 40 {
-		w = 40
+	if w < 24 || b.Height < 8 {
+		return smallTerminal(w, b.Height)
 	}
+	leftW := (w - 3) / 2
+	rightW := w - 3 - leftW
 	var sb strings.Builder
 	leftTitle := "SOURCE"
 	rightTitle := "DEST"
@@ -309,33 +308,33 @@ func (b *Browser) Render() string {
 	} else {
 		rightTitle = "DEST ◀"
 	}
-	sb.WriteString(styleHeader.Render(truncateRunes("anycompare  "+leftTitle+"  ↔  "+rightTitle, w)) + "\n")
-	sb.WriteString(styleSubHeader.Render(truncateRunes("L "+b.LeftRoot, w)) + "\n")
-	sb.WriteString(styleSubHeader.Render(truncateRunes("R "+b.RightRoot, w)) + "\n")
+	sb.WriteString(styleHeader.Render(fitCell(leftTitle, leftW)+" │ "+fitCell(rightTitle, rightW)) + "\n")
+	sb.WriteString(styleSubHeader.Render(fitCell(displayText(b.LeftRoot), leftW)+" │ "+fitCell(displayText(b.RightRoot), rightW)) + "\n")
+	sb.WriteString(styleSubHeader.Render(browserColumns(leftW)+" │ "+browserColumns(rightW)) + "\n")
 
 	rows := b.viewRows()
-	end := b.Offset + rows
-	if end > len(b.Visible) {
-		end = len(b.Visible)
-	}
-	relWidth := w - 8 - 1 - 8 - 6
-	if relWidth < 10 {
-		relWidth = 10
-	}
-	for i := b.Offset; i < end; i++ {
-		line := b.renderRow(b.Visible[i], relWidth)
-		if i == b.Cursor {
-			// Pad plain length to full width so the highlight spans the row.
-			plain := stripANSI(line)
-			if rw := len([]rune(plain)); rw < w {
-				line += strings.Repeat(" ", w-rw)
+	if b.ShowHelp {
+		help := strings.Split(b.renderHelp(), "\n")
+		for i := 0; i < rows; i++ {
+			if i < len(help) {
+				sb.WriteString(truncateRunes(help[i], w))
 			}
-			line = styleSelected.Render(line)
+			sb.WriteByte('\n')
 		}
-		sb.WriteString(line + "\n")
-	}
-	for i := end - b.Offset; i < rows; i++ {
-		sb.WriteString("\n")
+	} else {
+		for row := 0; row < rows; row++ {
+			i := b.Offset + row
+			line := strings.Repeat(" ", leftW) + " │ " + strings.Repeat(" ", rightW)
+			if i < len(b.Visible) {
+				line = b.renderRow(b.Visible[i], leftW, rightW, i == b.Cursor)
+				if i == b.Cursor {
+					line = styleSelected.Render(line)
+				}
+			} else if row == 0 {
+				line = fitCell("No matching entries — f changes filter", w)
+			}
+			sb.WriteString(line + "\n")
+		}
 	}
 	identical, different, onlyLeft, onlyRight := b.Counts()
 	status := fmt.Sprintf("= %d  ≠ %d  < %d  > %d   | filter:%s sort:%s | %d/%d",
@@ -344,23 +343,36 @@ func (b *Browser) Render() string {
 	if b.StatusMsg != "" {
 		status = b.StatusMsg + "  |  " + status
 	}
-	sb.WriteString(styleFooter.Render(truncateRunes(status, w)) + "\n")
+	sb.WriteString(styleFooter.Render(truncateRunes(displayText(status), w)) + "\n")
 	hints := "j/k navigate · enter diff · f filter · s sort · H hash-verify · R rescan · ? help · q quit"
 	sb.WriteString(styleFooter.Render(truncateRunes(hints, w)))
-	if b.ShowHelp {
-		sb.WriteString("\n" + b.renderHelp())
-	}
 	return sb.String()
 }
 
-func (b *Browser) renderRow(e compare.Entry, relWidth int) string {
-	left := padRight(formatSide(e.Left), 8)
-	right := padRight(formatSide(e.Right), 8)
-	rel := e.Rel
-	if e.IsDir() {
+// Each side owns its filename and metadata; a missing side stays blank.
+func browserColumns(width int) string {
+	if width < 24 {
+		return fitCell("Name", width)
+	}
+	return fitCell("Name", width-9) + " " + fitCell("Size", 8)
+}
+
+func browserCell(rel string, meta *compare.FileMeta, width int) string {
+	if meta == nil {
+		return strings.Repeat(" ", width)
+	}
+	if meta.IsDir {
 		rel += "/"
 	}
-	rel = padRight(truncateRunes(rel, relWidth), relWidth)
+	if width < 24 {
+		return fitCell(displayText(rel), width)
+	}
+	return fitCell(displayText(rel), width-9) + " " + fitCell(formatSide(meta), 8)
+}
+
+func (b *Browser) renderRow(e compare.Entry, leftW, rightW int, selected bool) string {
+	left := browserCell(e.Rel, e.Left, leftW)
+	right := browserCell(e.Rel, e.Right, rightW)
 
 	var sym string
 	switch e.State {
@@ -375,7 +387,11 @@ func (b *Browser) renderRow(e compare.Entry, relWidth int) string {
 	default:
 		sym = "?"
 	}
-	return left + " " + sym + " " + right + "  " + rel
+	cursor := " "
+	if selected {
+		cursor = "›"
+	}
+	return left + cursor + sym + " " + right
 }
 
 func (b *Browser) renderHelp() string {

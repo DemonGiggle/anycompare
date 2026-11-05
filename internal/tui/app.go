@@ -355,18 +355,8 @@ func (a *App) openDiff(e compare.Entry) tea.Cmd {
 
 func (a *App) updateDiffKey(key string) (tea.Model, tea.Cmd) {
 	d := a.diffview
-	// vimdiff [c ]c two-key sequences and fallbacks first.
-	if key == "[" || key == "]" || key == "c" || key == "C" || key == "n" || key == "N" || key == "p" {
-		if d.HandleBracket(key) {
-			// "[" alone arms; "N"/"p"/"n"/"]" already navigated.
-			if key == "c" || key == "C" {
-				// Resolve pending "[c" as prev-hunk ("]c" already moved).
-				// HandleBracket consumed it; determine direction by
-				// checking nothing else — treat bare "c" after "[" as prev.
-				d.PrevHunk()
-			}
-			return a, nil
-		}
+	if d.HandleBracket(key) {
+		return a, nil
 	}
 	switch key {
 	case "q", "esc":

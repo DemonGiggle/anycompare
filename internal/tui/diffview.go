@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/anycompare/anycompare/internal/diff"
@@ -41,7 +42,7 @@ type DiffView struct {
 	ErrMsg     string
 	Loading    bool
 	ShowHex    bool
-	bracketArm bool // true after "[" or "]" awaiting "c" (vimdiff [c ]c)
+	bracketArm bool // a bracket already navigated; consume a following c
 }
 
 // NewDiffView builds an empty diff view.
@@ -68,14 +69,15 @@ func (d *DiffView) SetDiff(rel, leftPath, rightPath string, fd *diff.FileDiff) {
 	d.FD = fd
 	d.Offset = 0
 	d.HunkIdx = 0
+	d.bracketArm = false
 	if fd != nil && len(fd.Hunks) > 0 {
-		d.Offset = fd.Hunks[0].RowStart
+		d.Offset = d.hunkOffsets()[0]
 	}
 	d.clamp()
 }
 
 func (d *DiffView) viewRows() int {
-	h := d.Height - 5 // header(2) + hunkbar(1) + footer(2)
+	h := d.Height - 4 // title + hunk bar + pane labels + footer
 	if h < 1 {
 		h = 1
 	}
@@ -114,8 +116,8 @@ func (d *DiffView) clamp() {
 // Scroll moves synchronously (both panes together).
 func (d *DiffView) Scroll(delta int) {
 	d.Offset += delta
-	d.syncHunkToOffset()
 	d.clamp()
+	d.syncHunkToOffset()
 }
 
 // Page scrolls one viewport.
@@ -124,25 +126,29 @@ func (d *DiffView) Page(delta int) {
 }
 
 // Top / Bottom jumps.
-func (d *DiffView) Top()    { d.Offset = 0; d.syncHunkToOffset(); d.clamp() }
-func (d *DiffView) Bottom() { d.Offset = d.rowCount(); d.syncHunkToOffset(); d.clamp() }
+func (d *DiffView) Top() { d.Offset = 0; d.clamp(); d.syncHunkToOffset() }
+func (d *DiffView) Bottom() {
+	d.Offset = max(0, d.rowCount()-d.viewRows())
+	d.clamp()
+	d.syncHunkToOffset()
+}
 
 // NextHunk / PrevHunk jump like vimdiff ]c / [c.
 func (d *DiffView) NextHunk() {
 	if d.FD == nil || len(d.FD.Hunks) == 0 {
 		return
 	}
-	for i, h := range d.FD.Hunks {
-		if h.RowStart > d.Offset {
+	for i, offset := range d.hunkOffsets() {
+		if offset > d.Offset {
 			d.HunkIdx = i
-			d.Offset = h.RowStart
+			d.Offset = offset
 			d.clamp()
 			return
 		}
 	}
 	// Wrap to last.
 	d.HunkIdx = len(d.FD.Hunks) - 1
-	d.Offset = d.FD.Hunks[d.HunkIdx].RowStart
+	d.Offset = d.hunkOffsets()[d.HunkIdx]
 	d.clamp()
 }
 
@@ -151,17 +157,18 @@ func (d *DiffView) PrevHunk() {
 	if d.FD == nil || len(d.FD.Hunks) == 0 {
 		return
 	}
-	for i := len(d.FD.Hunks) - 1; i >= 0; i-- {
-		if d.FD.Hunks[i].RowStart < d.Offset {
+	offsets := d.hunkOffsets()
+	for i := len(offsets) - 1; i >= 0; i-- {
+		if offsets[i] < d.Offset {
 			d.HunkIdx = i
-			d.Offset = d.FD.Hunks[i].RowStart
+			d.Offset = offsets[i]
 			d.clamp()
 			return
 		}
 	}
 	d.HunkIdx = 0
 	if len(d.FD.Hunks) > 0 {
-		d.Offset = d.FD.Hunks[0].RowStart
+		d.Offset = d.hunkOffsets()[0]
 	}
 	d.clamp()
 }
@@ -171,67 +178,97 @@ func (d *DiffView) syncHunkToOffset() {
 		return
 	}
 	best := 0
-	for i, h := range d.FD.Hunks {
-		if h.RowStart <= d.Offset {
+	for i, offset := range d.hunkOffsets() {
+		if offset <= d.Offset {
 			best = i
 		}
 	}
 	d.HunkIdx = best
 }
 
-// ToggleMode switches side-by-side vs unified.
-func (d *DiffView) ToggleMode() { d.Mode = 1 - d.Mode; d.clamp() }
+// hunkOffsets maps hunk starts into the active presentation's row space.
+func (d *DiffView) hunkOffsets() []int {
+	var offsets []int
+	if d.FD == nil {
+		return offsets
+	}
+	if d.Mode == ModeUnified {
+		for i, line := range d.unifiedLines() {
+			if line.hdr != "" {
+				offsets = append(offsets, i)
+			}
+		}
+	} else {
+		for _, h := range d.FD.Hunks {
+			offsets = append(offsets, h.RowStart)
+		}
+	}
+	return offsets
+}
 
-// HandleBracket feeds vimdiff-style [c / ]c two-key sequences plus
-// single-key [ ] n N p fallbacks. Returns true if the key was consumed.
+// ToggleMode keeps the current source row visible when changing presentation.
+func (d *DiffView) ToggleMode() {
+	row := d.Offset
+	if d.Mode == ModeUnified {
+		lines := d.unifiedLines()
+		if row < len(lines) {
+			row = lines[row].row
+		}
+		d.Mode = ModeSideBySide
+		d.Offset = row
+	} else {
+		d.Mode = ModeUnified
+		d.Offset = 0
+		for i, line := range d.unifiedLines() {
+			d.Offset = i
+			if line.row >= row {
+				break
+			}
+		}
+	}
+	d.clamp()
+	d.syncHunkToOffset()
+}
+
+// HandleBracket supports both single brackets and vim's [c / ]c, with
+// exactly one jump per sequence. Any unrelated key disarms the sequence.
 func (d *DiffView) HandleBracket(key string) bool {
+	armed := d.bracketArm
+	d.bracketArm = false
 	switch key {
 	case "[":
+		d.PrevHunk()
 		d.bracketArm = true
-		return true
 	case "]":
-		d.bracketArm = true
 		d.NextHunk()
-		// Keep armed so a following "c" is a no-op rather than typing.
-		return true
+		d.bracketArm = true
 	case "c", "C":
-		if d.bracketArm {
-			d.bracketArm = false
-			// "["+c means prev, "]"+c was already advanced; distinguish
-			// by doing nothing extra here for "]c" and stepping back once
-			// for "[c" is handled by caller state — simplify: if offset is
-			// at a hunk start from "]", stay; otherwise go prev.
-			return true
-		}
-		return false
+		return armed
 	case "n":
 		d.NextHunk()
-		return true
 	case "N", "p":
 		d.PrevHunk()
-		return true
+	default:
+		return false
 	}
-	if d.bracketArm {
-		d.bracketArm = false
-	}
-	return false
+	return true
 }
 
 // Render draws the diff view.
 func (d *DiffView) Render() string {
 	w := d.Width
-	if w < 40 {
-		w = 40
+	if w < 24 || d.Height < 8 {
+		return smallTerminal(w, d.Height)
 	}
 	var sb strings.Builder
 	if d.Loading {
-		sb.WriteString(styleHeader.Render("loading diff for "+truncateRunes(d.Rel, w-18)) + "\n")
+		sb.WriteString(styleHeader.Render("loading diff for "+truncateRunes(displayText(d.Rel), w-18)) + "\n")
 		sb.WriteString(styleSubHeader.Render("reading files…") + "\n")
 		return sb.String()
 	}
 	if d.ErrMsg != "" {
-		sb.WriteString(styleHeader.Render("diff: "+truncateRunes(d.Rel, w-7)) + "\n")
-		sb.WriteString(styleDiffSym.Render("error: "+d.ErrMsg) + "\n")
+		sb.WriteString(styleHeader.Render("diff: "+truncateRunes(displayText(d.Rel), w-7)) + "\n")
+		sb.WriteString(styleDiffSym.Render(truncateRunes("error: "+displayText(d.ErrMsg), w)) + "\n")
 		sb.WriteString(styleFooter.Render("esc/q back"))
 		return sb.String()
 	}
@@ -240,25 +277,30 @@ func (d *DiffView) Render() string {
 		return sb.String()
 	}
 	fd := d.FD
-	stats := fmt.Sprintf("%s  -%d +%d  hunk %d/%d  %s  ctx:%d%s", truncateRunes(d.Rel, w-40),
+	stats := fmt.Sprintf("%s  -%d +%d  hunk %d/%d  %s  ctx:%d%s", truncateRunes(displayText(d.Rel), w-40),
 		fd.Removed, fd.Added, hunkOneBased(d), len(fd.Hunks), d.Mode.String(), d.Context, wsFlag(d.IgnoreWS))
 	sb.WriteString(styleHeader.Render(truncateRunes(stats, w)) + "\n")
 	if fd.IsBinary && !d.ShowHex {
-		sb.WriteString(styleOnlyLeft.Render("binary files differ — press b to show text lines anyway") + "\n")
+		sb.WriteString(styleOnlyLeft.Render(truncateRunes("binary files — press b to show text lines", w)) + "\n")
 	} else if fd.Truncated {
-		sb.WriteString(styleSubHeader.Render("note: file truncated at 10 MiB") + "\n")
+		sb.WriteString(styleSubHeader.Render(truncateRunes("note: file truncated at 10 MiB", w)) + "\n")
 	} else {
 		hunkBar := ""
 		if len(fd.Hunks) > 0 && d.HunkIdx < len(fd.Hunks) {
 			hunkBar = fd.Hunks[d.HunkIdx].Header()
-		} else if len(fd.Rows) > 0 {
+		} else {
 			hunkBar = "files identical"
 		}
 		sb.WriteString(styleHunkHeader.Render(truncateRunes(hunkBar, w)) + "\n")
 	}
 
+	leftW := (w - 1) / 2
+	rightW := w - 1 - leftW
+	sb.WriteString(styleSubHeader.Render(fitCell("SOURCE "+displayText(d.LeftPath), leftW)+"│"+fitCell("DEST "+displayText(d.RightPath), rightW)) + "\n")
 	rows := d.viewRows()
-	if d.Mode == ModeSideBySide {
+	if fd.IsBinary && !d.ShowHex {
+		sb.WriteString(strings.Repeat("\n", rows-1))
+	} else if d.Mode == ModeSideBySide {
 		sb.WriteString(d.renderSideBySide(w, rows))
 	} else {
 		sb.WriteString(d.renderUnified(w, rows))
@@ -284,16 +326,9 @@ func wsFlag(ignore bool) string {
 }
 
 func (d *DiffView) renderSideBySide(w, rows int) string {
-	gutter := 1
-	pane := (w - gutter) / 2
-	if pane < 10 {
-		pane = 10
-	}
-	numW := 5 // "1234 "
-	textW := pane - numW
-	if textW < 4 {
-		textW = 4
-	}
+	leftW := (w - 1) / 2
+	rightW := w - 1 - leftW
+	numW := d.numberWidth()
 	var sb strings.Builder
 	end := d.Offset + rows
 	if end > len(d.FD.Rows) {
@@ -301,7 +336,7 @@ func (d *DiffView) renderSideBySide(w, rows int) string {
 	}
 	for i := d.Offset; i < end; i++ {
 		r := d.FD.Rows[i]
-		l, rr := d.renderRowPair(r, textW)
+		l, rr := d.renderRowPair(r, leftW-numW, rightW-numW, numW)
 		line := l + gutterStr(r.Kind) + rr
 		// Pad to width for stable background.
 		if pw := lipgloss.Width(line); pw < w {
@@ -337,72 +372,49 @@ func gutterStr(k diff.RowKind) string {
 	}
 }
 
-func (d *DiffView) renderRowPair(r diff.Row, textW int) (string, string) {
-	numW := 5
-	ln := "     "
-	if r.LeftNo >= 0 {
-		ln = fmt.Sprintf("%4d ", r.LeftNo+1)
+func (d *DiffView) numberWidth() int {
+	return max(4, len(strconv.Itoa(max(len(d.FD.LeftLines), len(d.FD.RightLines))))) + 1
+}
+
+func (d *DiffView) renderRowPair(r diff.Row, leftW, rightW, numW int) (string, string) {
+	lineNo := func(n int) string {
+		if n < 0 {
+			return strings.Repeat(" ", numW)
+		}
+		return styleLineNo.Render(fmt.Sprintf("%*d ", numW-1, n+1))
 	}
-	rn := "     "
-	if r.RightNo >= 0 {
-		rn = fmt.Sprintf("%4d ", r.RightNo+1)
-	}
-	_ = numW
+	left, right := displayText(r.LeftText), displayText(r.RightText)
+	l, rr := fitCell(left, leftW), fitCell(right, rightW)
 	switch r.Kind {
-	case diff.RowEqual:
-		return styleLineNo.Render(ln) + truncateRunes(r.LeftText, textW) + padSpaces(textW, r.LeftText),
-			styleLineNo.Render(rn) + truncateRunes(r.RightText, textW) + padSpaces(textW, r.RightText)
 	case diff.RowDelete:
-		body := truncateRunes(r.LeftText, textW) + padSpaces(textW, r.LeftText)
-		left := styleLineNo.Render(ln) + lipgloss.NewStyle().Background(colBgDel).Render(body)
-		right := styleLineNo.Render(rn) + lipgloss.NewStyle().Background(colBgDel).Foreground(colFaint).Render(padSpaces(textW, ""))
-		return left, right
+		l = lipgloss.NewStyle().Background(colBgDel).Render(l)
 	case diff.RowInsert:
-		body := truncateRunes(r.RightText, textW) + padSpaces(textW, r.RightText)
-		right := styleLineNo.Render(rn) + lipgloss.NewStyle().Background(colBgAdd).Render(body)
-		left := styleLineNo.Render(ln) + lipgloss.NewStyle().Background(colBgAdd).Foreground(colFaint).Render(padSpaces(textW, ""))
-		return left, right
-	default: // RowChange with intra-line highlight
-		return styleLineNo.Render(ln) + highlightCell(r.LeftText, r.RightText, textW, true),
-			styleLineNo.Render(rn) + highlightCell(r.RightText, r.LeftText, textW, false)
+		rr = lipgloss.NewStyle().Background(colBgAdd).Render(rr)
+	case diff.RowChange:
+		l = highlightCell(left, right, leftW)
+		rr = highlightCell(right, left, rightW)
 	}
+	return lineNo(r.LeftNo) + l, lineNo(r.RightNo) + rr
 }
 
-// highlightCell renders one side of a changed pair, emphasizing the
-// middle (non-prefix/suffix) segment vimdiff-style.
-func highlightCell(text, other string, textW int, _ bool) string {
-	pre, sufA, _ := diff.HighlightPair(text, other)
+// Clip the styled text, not only the equal/insert/delete cases, so even
+// long changed lines cannot push the other pane out of alignment.
+func highlightCell(text, other string, width int) string {
+	pre, suffix, _ := diff.HighlightPair(text, other)
 	runes := []rune(text)
-	if pre > len(runes) {
-		pre = len(runes)
-	}
-	if sufA > len(runes)-pre {
-		sufA = len(runes) - pre
-	}
 	base := lipgloss.NewStyle().Background(colBgChg)
-	hl := lipgloss.NewStyle().Background(colBgChgHL).Bold(true)
-	var sb strings.Builder
-	// Render rune by rune to preserve prefix/suffix split, then truncate.
-	full := base.Render(string(runes[:pre])) + hl.Render(string(runes[pre:len(runes)-sufA])) + base.Render(string(runes[len(runes)-sufA:]))
-	// Width-pad with base background.
-	plain := truncateRunes(text, textW)
-	_ = plain
-	_ = sb
-	pad := padSpaces(textW, text)
-	return full + base.Render(pad)
-}
-
-func padSpaces(textW int, text string) string {
-	n := textW - len([]rune(text))
-	if n <= 0 {
-		return ""
-	}
-	return strings.Repeat(" ", n)
+	highlight := lipgloss.NewStyle().Background(colBgChgHL).Bold(true)
+	full := base.Render(string(runes[:pre])) +
+		highlight.Render(string(runes[pre:len(runes)-suffix])) +
+		base.Render(string(runes[len(runes)-suffix:]))
+	clipped := truncateRunes(full, width)
+	return clipped + base.Render(strings.Repeat(" ", max(0, width-lipgloss.Width(clipped))))
 }
 
 // --- Unified rendering ---
 
 type unifiedLine struct {
+	row  int // source row in FD.Rows, used when switching modes
 	text string
 	kind diff.RowKind
 	hdr  string // non-empty for hunk header rows
@@ -414,22 +426,22 @@ func (d *DiffView) unifiedLines() []unifiedLine {
 		return out
 	}
 	for _, h := range d.FD.Hunks {
-		out = append(out, unifiedLine{hdr: h.Header()})
+		out = append(out, unifiedLine{hdr: h.Header(), row: h.RowStart})
 		for i := h.RowStart; i < h.RowEnd; i++ {
 			r := d.FD.Rows[i]
 			switch r.Kind {
 			case diff.RowEqual:
-				out = append(out, unifiedLine{text: " " + r.LeftText, kind: r.Kind})
+				out = append(out, unifiedLine{row: i, text: " " + r.LeftText, kind: r.Kind})
 			case diff.RowDelete:
-				out = append(out, unifiedLine{text: "-" + r.LeftText, kind: r.Kind})
+				out = append(out, unifiedLine{row: i, text: "-" + r.LeftText, kind: r.Kind})
 			case diff.RowInsert:
-				out = append(out, unifiedLine{text: "+" + r.RightText, kind: r.Kind})
+				out = append(out, unifiedLine{row: i, text: "+" + r.RightText, kind: r.Kind})
 			case diff.RowChange:
 				if r.LeftNo >= 0 {
-					out = append(out, unifiedLine{text: "-" + r.LeftText, kind: diff.RowDelete})
+					out = append(out, unifiedLine{row: i, text: "-" + r.LeftText, kind: diff.RowDelete})
 				}
 				if r.RightNo >= 0 {
-					out = append(out, unifiedLine{text: "+" + r.RightText, kind: diff.RowInsert})
+					out = append(out, unifiedLine{row: i, text: "+" + r.RightText, kind: diff.RowInsert})
 				}
 			}
 		}
@@ -452,7 +464,7 @@ func (d *DiffView) renderUnified(w, rows int) string {
 		if ul.hdr != "" {
 			line = styleHunkHeader.Render(truncateRunes(ul.hdr, w))
 		} else {
-			t := truncateRunes(ul.text, w)
+			t := truncateRunes(displayText(ul.text), w)
 			switch ul.kind {
 			case diff.RowDelete:
 				line = lipgloss.NewStyle().Background(colBgDel).Render(padRight(t, w))

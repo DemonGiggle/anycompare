@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"strings"
+	"unicode"
+
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -31,27 +35,62 @@ var (
 	styleLineNo     = lipgloss.NewStyle().Foreground(colFaint)
 )
 
-// truncateRunes cuts s to at most n display runes (no ANSI awareness;
-// callers pass plain text before styling).
+// truncateRunes clips to terminal columns, preserving wide characters and ANSI styles.
 func truncateRunes(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
+	return ansi.Truncate(s, n, "…")
 }
 
-// padRight pads s with spaces to width n (in runes).
+// padRight pads s with actual spaces to n terminal columns.
 func padRight(s string, n int) string {
-	r := []rune(s)
-	if len(r) >= n {
+	w := ansi.StringWidth(s)
+	if w >= n {
 		return s
 	}
-	return s + string(make([]rune, n-len(r)))
+	return s + strings.Repeat(" ", n-w)
+}
+
+func fitCell(s string, width int) string {
+	return padRight(truncateRunes(s, width), width)
+}
+
+// displayText keeps file contents and paths on one terminal row. Tabs use
+// four-column stops; other control characters are shown visibly.
+func displayText(s string) string {
+	var out strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\t':
+			out.WriteRune(r)
+		case r < 32:
+			out.WriteRune('^')
+			out.WriteRune(r + 64)
+		case unicode.IsControl(r):
+			out.WriteRune('�')
+		default:
+			out.WriteRune(r)
+		}
+	}
+	parts := strings.Split(out.String(), "\t")
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	out.Reset()
+	column := 0
+	for i, part := range parts {
+		if i > 0 {
+			spaces := 4 - column%4
+			out.WriteString(strings.Repeat(" ", spaces))
+			column += spaces
+		}
+		out.WriteString(part)
+		column += ansi.StringWidth(part)
+	}
+	return out.String()
+}
+
+func smallTerminal(w, h int) string {
+	return truncateRunes("Resize terminal (at least 24×8)", w)
 }

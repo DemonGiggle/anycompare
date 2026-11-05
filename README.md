@@ -16,8 +16,10 @@ anycompare [flags] <source-dir> <dest-dir>
   (`=` identical rows hidden); `f` cycles filters
   (differences/all/different/only-left/only-right). `--browser` starts
   in the browser instead.
-- **Browser:** one synchronized row per relative path, two size columns
-  (left `SOURCE`, right `DEST`) and a centre status gutter:
+- **Browser:** synchronized `SOURCE` and `DEST` panes, each with filenames
+  and sizes, plus a centre status gutter. Files missing from one side leave
+  that pane's row blank; `›` marks the selection even without colors.
+  Gutter symbols:
   `=` identical, `≠` different, `<` only-left, `>` only-right
   (same idea as Beyond Compare / Meld folder comparison).
 - **ENTER opens a vimdiff-style diff:** side-by-side panes scrolling together,
