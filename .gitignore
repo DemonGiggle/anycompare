@@ -1,3 +1,5 @@
-# Build outputs (root binary and release staging dir only)
-/anycompare
+# Build outputs (local binary dir and release staging dir only)
+/bin/
 /dist/
+# Legacy root binary location (see Makefile OUT=bin/anycompare)
+/anycompare

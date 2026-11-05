@@ -39,7 +39,7 @@ Prebuilt `linux-amd64` / `linux-arm64` tarballs live on GitHub Releases
 ```sh
 go install github.com/anycompare/anycompare/cmd/anycompare@latest
 # or
-make build          # ./anycompare
+make build          # bin/anycompare
 make build-all      # dist/anycompare-linux-amd64, dist/anycompare-linux-arm64
 ```
 
