@@ -27,9 +27,9 @@ anycompare [flags] <source-dir> <dest-dir>
   `+`/`-` changes context, `b` forces binary-as-text, `esc` returns to the
   browser with cursor/filter preserved.
 - **Fast default comparison:** type → size → mtime (second granularity).
-  Same-size but different-mtime files are flagged `≠`; opening the diff
-  verifies content and clears the flag when the bytes match (or press
-  `H` to verify by SHA-256, or scan with `--hash` for definitive results).
+  Same-size but different-mtime files flag `≠` on the fast scan, then a
+  background content check settles them (or press `H` to verify by
+  SHA-256 immediately, or scan with `--hash` for definitive results).
   CRLF-vs-LF pairs report a line-ending notice instead of a silent match.
 - **Single static binary:** `CGO_ENABLED=0`, no runtime beyond the binary.
 

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/anycompare/anycompare/internal/compare"
 	"github.com/anycompare/anycompare/internal/diff"
@@ -21,12 +22,25 @@ type scanDoneMsg struct {
 	entries []compare.Entry
 	summary compare.Summary
 	err     error
+	gen     int
 }
 
 type hashDoneMsg struct {
 	rel       string
 	identical bool
 	err       error
+}
+
+// verifyDoneMsg carries background content-check results for one scan
+// generation; stale generations are dropped (a rescan superseded them).
+type verifyDoneMsg struct {
+	gen     int
+	results []contentResult
+}
+
+type contentResult struct {
+	rel       string
+	identical bool
 }
 
 type diffDoneMsg struct {
@@ -53,6 +67,9 @@ type App struct {
 	summary     compare.Summary
 	width       int
 	height      int
+	// scanGen tags each scan (and its follow-up content check) so a
+	// slow completion cannot overwrite a newer rescan's rows.
+	scanGen int
 }
 
 // NewApp builds the root model.
@@ -93,10 +110,12 @@ func (a *App) Init() tea.Cmd {
 }
 
 func (a *App) scanCmd() tea.Cmd {
+	a.scanGen++
+	gen := a.scanGen
 	left, right, opts := a.browser.LeftRoot, a.browser.RightRoot, a.compareOpts
 	return func() tea.Msg {
 		entries, summary, err := compare.Scan(left, right, opts)
-		return scanDoneMsg{entries: entries, summary: summary, err: err}
+		return scanDoneMsg{entries: entries, summary: summary, err: err, gen: gen}
 	}
 }
 
@@ -104,6 +123,40 @@ func hashCmd(entry compare.Entry) tea.Cmd {
 	return func() tea.Msg {
 		same, err := compare.VerifyEntry(entry)
 		return hashDoneMsg{rel: entry.Rel, identical: same, err: err}
+	}
+}
+
+// pendingContentChecks collects the fast-path-ambiguous rows: same-size
+// file pairs flagged Different on mtime alone.
+func pendingContentChecks(entries []compare.Entry) []compare.Entry {
+	var pending []compare.Entry
+	for _, e := range entries {
+		if e.NeedsContentCheck() {
+			pending = append(pending, e)
+		}
+	}
+	return pending
+}
+
+// verifyContentsCmd hash-checks the ambiguous rows sequentially in the
+// background. Hash errors resolve nothing: the row keeps its fast-path
+// flag and a rescan or H can retry it.
+func verifyContentsCmd(gen int, pending []compare.Entry) tea.Cmd {
+	snap := make([]compare.Entry, len(pending))
+	copy(snap, pending)
+	return func() tea.Msg {
+		results := make([]contentResult, 0, len(snap))
+		for _, e := range snap {
+			if e.Left == nil || e.Right == nil {
+				continue
+			}
+			same, err := compare.HashesEqual(e.Left.AbsPath, e.Right.AbsPath)
+			if err != nil {
+				continue
+			}
+			results = append(results, contentResult{rel: e.Rel, identical: same})
+		}
+		return verifyDoneMsg{gen: gen, results: results}
 	}
 }
 
@@ -123,6 +176,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.diffview.SetSize(msg.Width, msg.Height)
 		return a, nil
 	case scanDoneMsg:
+		if msg.gen != a.scanGen {
+			return a, nil // stale: a newer rescan superseded this one
+		}
 		a.scanning = false
 		if msg.err != nil {
 			a.errMsg = msg.err.Error()
@@ -147,6 +203,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.browser.ensureVisible()
 		}
 		a.browser.StatusMsg = ""
+		// The fast path flags same-size/mtime-differing files without
+		// reading them, so an unchanged file can flash as ≠ until it is
+		// opened. Settle those rows with one background content check
+		// instead of waiting for the user to open each one.
+		if pending := pendingContentChecks(msg.entries); len(pending) > 0 {
+			a.browser.StatusMsg = fmt.Sprintf("verifying contents (%d files)…", len(pending))
+			return a, verifyContentsCmd(msg.gen, pending)
+		}
 		return a, nil
 	case hashDoneMsg:
 		if msg.err != nil {
@@ -187,6 +251,42 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the browser row instead of leaving the views in disagreement.
 		if msg.fd != nil && msg.fd.SameBytes && !msg.fd.Truncated {
 			a.markBrowserIdentical(msg.rel)
+		}
+		return a, nil
+	case verifyDoneMsg:
+		if msg.gen != a.scanGen {
+			return a, nil // stale: a newer rescan superseded this check
+		}
+		var same, differ int
+		for _, r := range msg.results {
+			for _, e := range a.browser.All {
+				if e.Rel != r.rel {
+					continue
+				}
+				if e.State != compare.StateDifferent {
+					break // already resolved (opened or H-verified)
+				}
+				if r.identical {
+					e.State = compare.StateIdentical
+					e.Note = "verified identical (content)"
+					same++
+				} else {
+					e.State = compare.StateDifferent
+					e.Note = "content differs (hash)"
+					differ++
+				}
+				a.browser.UpdateEntry(e)
+				break
+			}
+		}
+		// Only replace our own transient message; a user key (f/s/H/R)
+		// pressed mid-check owns the status line instead.
+		if strings.HasPrefix(a.browser.StatusMsg, "verifying contents") {
+			if same+differ == 0 {
+				a.browser.StatusMsg = ""
+			} else {
+				a.browser.StatusMsg = fmt.Sprintf("content check: %d identical, %d differ", same, differ)
+			}
 		}
 		return a, nil
 	case tea.KeyMsg:

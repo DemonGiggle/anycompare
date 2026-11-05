@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -122,9 +124,11 @@ func TestAppStaysInBrowserAfterScan(t *testing.T) {
 		{Rel: "same.txt", State: compare.StateIdentical,
 			Left: &compare.FileMeta{AbsPath: "/l/same.txt"}, Right: &compare.FileMeta{AbsPath: "/r/same.txt"}},
 		{Rel: "aaa-diff.txt", State: compare.StateDifferent,
-			Left: &compare.FileMeta{AbsPath: "/l/aaa-diff.txt"}, Right: &compare.FileMeta{AbsPath: "/r/aaa-diff.txt"}},
+			Left:  &compare.FileMeta{AbsPath: "/l/aaa-diff.txt", Size: 1},
+			Right: &compare.FileMeta{AbsPath: "/r/aaa-diff.txt", Size: 2}},
 		{Rel: "zzz-diff.txt", State: compare.StateDifferent,
-			Left: &compare.FileMeta{AbsPath: "/l/zzz-diff.txt"}, Right: &compare.FileMeta{AbsPath: "/r/zzz-diff.txt"}},
+			Left:  &compare.FileMeta{AbsPath: "/l/zzz-diff.txt", Size: 3},
+			Right: &compare.FileMeta{AbsPath: "/r/zzz-diff.txt", Size: 4}},
 	}
 	m, cmd := app.Update(scanDoneMsg{entries: entries})
 	app = m.(*App)
@@ -192,5 +196,88 @@ func TestAppDiffOpenKeepsDifferentWhenBytesDiffer(t *testing.T) {
 	app = m.(*App)
 	if got := app.Browser().All[0]; got.State != compare.StateDifferent {
 		t.Fatalf("differing content must stay different, got %+v", got)
+	}
+}
+
+func writeVerifyFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestScanAutoVerifiesAmbiguousRows(t *testing.T) {
+	left, right := t.TempDir(), t.TempDir()
+	// Same bytes, so only the fast-path mtime flag marks it ≠.
+	l := writeVerifyFile(t, left, "same.txt", "identical-bytes")
+	r := writeVerifyFile(t, right, "same.txt", "identical-bytes")
+	lChanged := writeVerifyFile(t, left, "changed.txt", "short")
+	rChanged := writeVerifyFile(t, right, "changed.txt", "longer-different-content")
+	entries := []compare.Entry{
+		{Rel: "same.txt", State: compare.StateDifferent, Note: "same size, mtime differs (H verifies content)",
+			Left: &compare.FileMeta{AbsPath: l, Size: 15}, Right: &compare.FileMeta{AbsPath: r, Size: 15}},
+		{Rel: "changed.txt", State: compare.StateDifferent, Note: "sizes differ",
+			Left:  &compare.FileMeta{AbsPath: lChanged, Size: 5},
+			Right: &compare.FileMeta{AbsPath: rChanged, Size: 24}},
+	}
+	app := NewApp(left, right, compare.DefaultOptions(), 3)
+	m, cmd := app.Update(scanDoneMsg{entries: entries})
+	app = m.(*App)
+	if cmd == nil {
+		t.Fatal("ambiguous rows should kick off a background content check")
+	}
+	if got := app.Browser().StatusMsg; !strings.HasPrefix(got, "verifying contents") {
+		t.Fatalf("unexpected status %q", got)
+	}
+	msg, ok := cmd().(verifyDoneMsg)
+	if !ok {
+		t.Fatalf("expected verifyDoneMsg, got %T", cmd())
+	}
+	m2, _ := app.Update(msg)
+	app = m2.(*App)
+	var same, changedEntry *compare.Entry
+	for i := range app.Browser().All {
+		switch app.Browser().All[i].Rel {
+		case "same.txt":
+			same = &app.Browser().All[i]
+		case "changed.txt":
+			changedEntry = &app.Browser().All[i]
+		}
+	}
+	if same == nil || same.State != compare.StateIdentical {
+		t.Fatalf("content check should clear the mtime-only flag, got %+v", same)
+	}
+	if changedEntry == nil || changedEntry.State != compare.StateDifferent {
+		t.Fatalf("size-differing row must stay different, got %+v", changedEntry)
+	}
+	if got := app.Browser().StatusMsg; got != "content check: 1 identical, 0 differ" {
+		t.Fatalf("unexpected status %q", got)
+	}
+}
+
+func TestStaleScanAndVerifyDropped(t *testing.T) {
+	app := NewApp("L", "R", compare.DefaultOptions(), 3)
+	_ = app.scanCmd() // gen 1: a newer scan is in flight
+	m, cmd := app.Update(scanDoneMsg{entries: []compare.Entry{
+		{Rel: "old.txt", State: compare.StateDifferent,
+			Left:  &compare.FileMeta{AbsPath: "/l/old.txt"},
+			Right: &compare.FileMeta{AbsPath: "/r/old.txt"}},
+	}})
+	app = m.(*App)
+	if cmd != nil {
+		t.Fatal("stale scan must not kick off work")
+	}
+	if len(app.Browser().All) != 0 {
+		t.Fatalf("stale scan must not touch rows: %+v", app.Browser().All)
+	}
+	m2, _ := app.Update(verifyDoneMsg{gen: 999, results: []contentResult{{rel: "x", identical: true}}})
+	app = m2.(*App)
+	if len(app.Browser().All) != 0 {
+		t.Fatal("stale verify must not touch rows")
 	}
 }

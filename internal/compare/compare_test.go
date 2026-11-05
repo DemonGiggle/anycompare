@@ -161,3 +161,33 @@ func TestScanIgnore(t *testing.T) {
 		t.Fatal("keep.txt should be present")
 	}
 }
+
+func TestNeedsContentCheck(t *testing.T) {
+	file := func(size int64) *FileMeta { return &FileMeta{Size: size, ModTime: time.Now()} }
+	mtimeFlagged := Entry{Rel: "f", State: StateDifferent, Left: file(10), Right: file(10)}
+	if !mtimeFlagged.NeedsContentCheck() {
+		t.Fatal("same-size mtime flag needs a content check")
+	}
+	sizeFlagged := Entry{Rel: "f", State: StateDifferent, Left: file(10), Right: file(11)}
+	if sizeFlagged.NeedsContentCheck() {
+		t.Fatal("size-differing rows are settled without content")
+	}
+	identical := Entry{Rel: "f", State: StateIdentical, Left: file(10), Right: file(10)}
+	if identical.NeedsContentCheck() {
+		t.Fatal("identical rows need no check")
+	}
+	symlink := Entry{Rel: "f", State: StateDifferent,
+		Left: &FileMeta{Size: 3, IsSymlink: true}, Right: &FileMeta{Size: 3, IsSymlink: true}}
+	if symlink.NeedsContentCheck() {
+		t.Fatal("symlink rows are settled by target string")
+	}
+	dir := Entry{Rel: "d", State: StateIdentical,
+		Left: &FileMeta{IsDir: true}, Right: &FileMeta{IsDir: true}}
+	if dir.NeedsContentCheck() {
+		t.Fatal("directory rows need no check")
+	}
+	oneSided := Entry{Rel: "f", State: StateOnlyLeft, Left: file(10)}
+	if oneSided.NeedsContentCheck() {
+		t.Fatal("one-sided rows need no check")
+	}
+}

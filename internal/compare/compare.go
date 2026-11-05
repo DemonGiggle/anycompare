@@ -94,6 +94,26 @@ func (e Entry) IsDir() bool {
 	return (e.Left != nil && e.Left.IsDir) || (e.Right != nil && e.Right.IsDir)
 }
 
+// NeedsContentCheck reports whether the fast path could only flag the
+// entry via mtime: a regular file pair with equal sizes whose contents
+// were never read. Only a content check (hash, diff open, auto-verify)
+// can settle whether it truly differs.
+func (e Entry) NeedsContentCheck() bool {
+	if e.State != StateDifferent {
+		return false
+	}
+	if e.Left == nil || e.Right == nil {
+		return false
+	}
+	if e.Left.IsDir || e.Right.IsDir || e.Left.IsSymlink || e.Right.IsSymlink {
+		return false
+	}
+	if e.Left.Size < 0 || e.Right.Size < 0 {
+		return false
+	}
+	return e.Left.Size == e.Right.Size
+}
+
 // Summary aggregates counts over a scan.
 type Summary struct {
 	Total     int
