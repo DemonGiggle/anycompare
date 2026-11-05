@@ -1,14 +1,38 @@
 # anycompare
 
-Read-only TUI directory comparison for Linux (`amd64` + `arm64`), inspired by
-**Beyond Compare**, **Meld**, **WinMerge** / **KDiff3** folder-compare views,
-with file diffs rendered **vimdiff-style** (synchronized side-by-side panes).
+[![ci](https://github.com/DemonGiggle/anycompare/actions/workflows/ci.yml/badge.svg)](https://github.com/DemonGiggle/anycompare/actions)
 
-```
+**Spot every difference between two directories — side by side, from your terminal.**
+
+`anycompare` is a read-only TUI directory comparison for Linux
+(`amd64` + `arm64`). Think Beyond Compare's folder view meets vimdiff: a
+synchronized `SOURCE` / `DEST` browser for the big picture, and one keystroke
+to drop into a synchronized side-by-side diff of any file. No setup, no
+runtime, no risk to your files — a single static binary that only ever reads.
+
+```sh
 anycompare [flags] <source-dir> <dest-dir>
 ```
 
-## What you get
+## Why anycompare
+
+- **Answers “what changed?” in seconds.** The browser opens filtered to
+  differences, and `enter` jumps straight into the diff. Backups, deploys,
+  photo libraries — if it fits in two trees, you can audit it.
+- **Fast without lying.** A type → size → mtime scan paints instantly, then
+  a background content check quietly settles the ambiguous rows. Press `H`
+  for an on-demand SHA-256 verdict on any file, or `--hash` for a fully
+  definitive scan.
+- **Diffs that read like vimdiff.** Synchronized scrolling, intra-line
+  highlight of the changed segment, numbered hunk headers
+  (`[1/2] @@ -a,b +c,d @@`) with `n`/`N` jumps, side-by-side ↔ unified
+  (`d`), whitespace toggle (`w`), adjustable context (`+`/`-`).
+- **Safe by design.** Read-only means there are no copy/sync/merge keys to
+  fat-finger. Symlinks are compared, never followed; sockets and devices
+  are skipped, not probed.
+- **One static binary.** `CGO_ENABLED=0`, nothing to install, happy over SSH.
+
+## Tour
 
 - **Browser first:** typing `anycompare <source> <dest>` opens the folder
   browser filtered to differences (`=` identical rows hidden);
@@ -40,7 +64,7 @@ Prebuilt `linux-amd64` / `linux-arm64` tarballs live on GitHub Releases
 (see `.goreleaser.yaml`), or build from source:
 
 ```sh
-go install github.com/anycompare/anycompare/cmd/anycompare@latest
+go install github.com/DemonGiggle/anycompare/cmd/anycompare@latest
 # or
 make build          # bin/anycompare
 make build-all      # dist/anycompare-linux-amd64, dist/anycompare-linux-arm64
