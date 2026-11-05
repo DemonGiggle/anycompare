@@ -1,0 +1,34 @@
+version: 2
+
+project_name: anycompare
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: anycompare
+    main: ./cmd/anycompare
+    binary: anycompare
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: anycompare
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  draft: false

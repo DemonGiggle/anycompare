@@ -1,0 +1,3 @@
+# Build outputs (root binary and release staging dir only)
+/anycompare
+/dist/

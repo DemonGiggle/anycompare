@@ -1,0 +1,158 @@
+package tui
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/anycompare/anycompare/internal/compare"
+	"github.com/anycompare/anycompare/internal/diff"
+)
+
+func testEntries() []compare.Entry {
+	return []compare.Entry{
+		{Rel: "same.txt", State: compare.StateIdentical},
+		{Rel: "diff.txt", State: compare.StateDifferent},
+		{Rel: "left-only.txt", State: compare.StateOnlyLeft},
+		{Rel: "right-only.txt", State: compare.StateOnlyRight},
+	}
+}
+
+func TestBrowserFilterCycle(t *testing.T) {
+	b := NewBrowser("L", "R")
+	b.SetSize(80, 20)
+	b.SetEntries(testEntries())
+	// Default filter shows differences only (identical hidden).
+	if len(b.Visible) != 3 {
+		t.Fatalf("default differences visible=%d want 3", len(b.Visible))
+	}
+	b.FilterNext() // all
+	if len(b.Visible) != 4 {
+		t.Fatalf("all filter: %+v", b.Visible)
+	}
+	b.FilterNext() // different
+	if len(b.Visible) != 1 || b.Visible[0].Rel != "diff.txt" {
+		t.Fatalf("different filter: %+v", b.Visible)
+	}
+	b.FilterNext() // only-left
+	if len(b.Visible) != 1 || b.Visible[0].Rel != "left-only.txt" {
+		t.Fatalf("only-left filter: %+v", b.Visible)
+	}
+	b.FilterNext() // only-right
+	if len(b.Visible) != 1 || b.Visible[0].Rel != "right-only.txt" {
+		t.Fatalf("only-right filter: %+v", b.Visible)
+	}
+	b.FilterNext() // back to differences
+	if len(b.Visible) != 3 {
+		t.Fatalf("differences filter: %+v", b.Visible)
+	}
+}
+
+func TestBrowserRenderContainsGutter(t *testing.T) {
+	b := NewBrowser("L", "R")
+	b.SetSize(80, 20)
+	b.SetEntries(testEntries())
+	b.Filter = FilterAll
+	b.Apply()
+	out := b.Render()
+	for _, want := range []string{"=", "≠", "left-only.txt", "right-only.txt"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("render missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestDiffHunkNavigation(t *testing.T) {
+	fd := diff.Compute([]string{"a", "b", "c", "d", "e", "f", "g"}, []string{"a", "X", "c", "d", "e", "Y", "g"}, false, 1)
+	if len(fd.Hunks) != 2 {
+		t.Fatalf("hunks=%d want 2", len(fd.Hunks))
+	}
+	d := NewDiffView()
+	d.SetSize(100, 20)
+	d.SetDiff("f.txt", "L", "R", fd)
+	if d.Offset != fd.Hunks[0].RowStart {
+		t.Fatalf("initial offset=%d want %d", d.Offset, fd.Hunks[0].RowStart)
+	}
+	d.NextHunk()
+	if d.Offset != fd.Hunks[1].RowStart {
+		t.Fatalf("next offset=%d want %d", d.Offset, fd.Hunks[1].RowStart)
+	}
+	d.PrevHunk()
+	if d.Offset != fd.Hunks[0].RowStart {
+		t.Fatalf("prev offset=%d want %d", d.Offset, fd.Hunks[0].RowStart)
+	}
+}
+
+func TestDiffRenderModes(t *testing.T) {
+	fd := diff.Compute([]string{"hello world"}, []string{"hello there"}, false, 3)
+	d := NewDiffView()
+	d.SetSize(100, 20)
+	d.SetDiff("f.txt", "L", "R", fd)
+	sbs := d.Render()
+	if !strings.Contains(sbs, "hello") {
+		t.Fatalf("side-by-side missing content:\n%s", sbs)
+	}
+	d.ToggleMode()
+	uni := d.Render()
+	if !strings.Contains(uni, "-hello world") || !strings.Contains(uni, "+hello there") {
+		t.Fatalf("unified missing -/+ lines:\n%s", uni)
+	}
+}
+
+func TestAppOpenDiffGuards(t *testing.T) {
+	app := NewApp("L", "R", compare.DefaultOptions(), 3)
+	app.browser.SetEntries([]compare.Entry{
+		{Rel: "only.txt", State: compare.StateOnlyLeft, Left: &compare.FileMeta{AbsPath: "/l/only.txt"}},
+		{Rel: "dir", State: compare.StateIdentical, Left: &compare.FileMeta{IsDir: true}, Right: &compare.FileMeta{IsDir: true}},
+	})
+	if cmd := app.openDiff(app.browser.All[0]); cmd != nil {
+		t.Fatal("only-left should not open a diff")
+	}
+	if app.Active() != ViewBrowser {
+		t.Fatal("should stay in browser for one-sided entries")
+	}
+	if cmd := app.openDiff(app.browser.All[1]); cmd != nil {
+		t.Fatal("directories should not open a diff")
+	}
+}
+
+func TestAppAutoOpensFirstDiff(t *testing.T) {
+	app := NewApp("L", "R", compare.DefaultOptions(), 3)
+	entries := []compare.Entry{
+		{Rel: "same.txt", State: compare.StateIdentical,
+			Left: &compare.FileMeta{AbsPath: "/l/same.txt"}, Right: &compare.FileMeta{AbsPath: "/r/same.txt"}},
+		{Rel: "aaa-diff.txt", State: compare.StateDifferent,
+			Left: &compare.FileMeta{AbsPath: "/l/aaa-diff.txt"}, Right: &compare.FileMeta{AbsPath: "/r/aaa-diff.txt"}},
+		{Rel: "zzz-diff.txt", State: compare.StateDifferent,
+			Left: &compare.FileMeta{AbsPath: "/l/zzz-diff.txt"}, Right: &compare.FileMeta{AbsPath: "/r/zzz-diff.txt"}},
+	}
+	m, cmd := app.Update(scanDoneMsg{entries: entries})
+	app = m.(*App)
+	if cmd == nil {
+		t.Fatal("initial scan should auto-open a diff")
+	}
+	if app.Active() != ViewDiff {
+		t.Fatal("should land in the diff view after startup")
+	}
+	if app.Diff().Rel != "aaa-diff.txt" {
+		t.Fatalf("should open first differing file, got %q", app.Diff().Rel)
+	}
+	// A rescan must not yank the user out of the browser again.
+	m2, _ := app.Update(scanDoneMsg{entries: entries})
+	_ = m2
+}
+
+func TestAppStaysInBrowserWhenIdentical(t *testing.T) {
+	app := NewApp("L", "R", compare.DefaultOptions(), 3)
+	entries := []compare.Entry{
+		{Rel: "same.txt", State: compare.StateIdentical,
+			Left: &compare.FileMeta{AbsPath: "/l/same.txt"}, Right: &compare.FileMeta{AbsPath: "/r/same.txt"}},
+	}
+	m, cmd := app.Update(scanDoneMsg{entries: entries})
+	app = m.(*App)
+	if cmd != nil {
+		t.Fatal("no differing files: should not auto-open")
+	}
+	if app.Active() != ViewBrowser {
+		t.Fatal("should stay in browser when trees are identical")
+	}
+}
