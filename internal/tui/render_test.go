@@ -168,6 +168,24 @@ func TestBinaryContentRequiresToggle(t *testing.T) {
 	assertFrame(t, d.Render(), 80, 24)
 }
 
+func TestDiffViewLineEndingBanner(t *testing.T) {
+	d := NewDiffView()
+	d.SetSize(80, 24)
+	// No line hunks, but the loader saw the bytes differ only in
+	// line endings: the view must not claim "files identical".
+	fd := diff.Compute([]string{"a"}, []string{"a"}, false, 3)
+	fd.LineEndingOnly = true
+	d.SetDiff("crlf.txt", "L", "R", fd)
+	out := d.Render()
+	if !strings.Contains(out, "line endings differ") {
+		t.Fatalf("missing line-ending banner in:\n%s", out)
+	}
+	if strings.Contains(out, "files identical") {
+		t.Fatalf("must not claim identical for CRLF pair in:\n%s", out)
+	}
+	assertFrame(t, out, 80, 24)
+}
+
 func TestBottomShowsLastPage(t *testing.T) {
 	lines := make([]string, 100)
 	for i := range lines {

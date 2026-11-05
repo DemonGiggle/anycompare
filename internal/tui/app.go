@@ -182,6 +182,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.diffview.Context = msg.context
 		a.diffview.SetDiff(msg.rel, msg.leftPath, msg.rightPath, msg.fd)
 		a.diffview.SetSize(a.width, a.height)
+		// Opening the diff already read both files in full: byte-identical
+		// content proves a fast-path ≠ (e.g. mtime-only) wrong, so correct
+		// the browser row instead of leaving the views in disagreement.
+		if msg.fd != nil && msg.fd.SameBytes && !msg.fd.Truncated {
+			a.markBrowserIdentical(msg.rel)
+		}
 		return a, nil
 	case tea.KeyMsg:
 		return a.handleKey(msg)
@@ -257,6 +263,24 @@ func (a *App) updateBrowserKey(key string) (tea.Model, tea.Cmd) {
 		b.ShowHelp = false
 	}
 	return a, nil
+}
+
+// markBrowserIdentical flips one browser row to identical after its
+// content was verified byte-for-byte (e.g. by opening its diff),
+// keeping the views consistent without an extra hash pass.
+func (a *App) markBrowserIdentical(rel string) {
+	for _, e := range a.browser.All {
+		if e.Rel == rel {
+			if e.State == compare.StateIdentical {
+				return
+			}
+			e.State = compare.StateIdentical
+			e.Note = "verified identical (content)"
+			a.browser.UpdateEntry(e)
+			a.browser.StatusMsg = rel + ": contents identical"
+			return
+		}
+	}
 }
 
 // openDiff validates the selection and either shows a status message
@@ -348,6 +372,10 @@ func (a *App) recomputeDiff() {
 	fd.Rel = d.FD.Rel
 	fd.IsBinary = d.FD.IsBinary
 	fd.Truncated = d.FD.Truncated
+	// SameBytes/LineEndingOnly describe the raw bytes, which the
+	// whitespace/context toggles do not change.
+	fd.SameBytes = d.FD.SameBytes
+	fd.LineEndingOnly = d.FD.LineEndingOnly
 	sel := d.Offset
 	d.SetDiff(d.Rel, d.LeftPath, d.RightPath, fd)
 	// Keep the scroll position where possible.

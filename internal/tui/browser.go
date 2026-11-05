@@ -402,7 +402,7 @@ func (b *Browser) renderHelp() string {
 		"  s          cycle sort         H      hash-verify selection",
 		"  R          rescan disks       Tab    switch pane focus",
 		"  ?          toggle this help   q      quit",
-		"Comparison: fast path is size+mtime; H compares SHA-256 content.",
+		"Comparison: fast path is size+mtime; opening a diff verifies content; H compares SHA-256.",
 	}
 	return styleSubHeader.Render(strings.Join(lines, "\n"))
 }

@@ -5,6 +5,7 @@
 package diff
 
 import (
+	"io"
 	"os"
 	"strings"
 
@@ -63,6 +64,15 @@ type FileDiff struct {
 	IsBinary   bool
 	Truncated  bool
 	Rel        string
+	// SameBytes reports that both files were read in full and are
+	// byte-for-byte identical. Only LoadPair sets it; Compute leaves
+	// it false (unknown).
+	SameBytes bool
+	// LineEndingOnly reports that the pair differs only in line
+	// endings (CRLF vs LF), which SplitLines normalizes away: the
+	// aligned rows show no hunks even though the bytes differ.
+	// Only LoadPair sets it; Compute leaves it false.
+	LineEndingOnly bool
 }
 
 // Header returns a `diff -u`-style hunk header (1-based).
@@ -418,6 +428,19 @@ func LoadPair(rel, leftPath, rightPath string, ignoreWS bool, context int) (*Fil
 	fd.IsBinary = binary
 	fd.Truncated = ltrunc || rtrunc
 	fd.Rel = rel
+	// Relate the line view back to the raw bytes (only meaningful
+	// when both sides were read in full): same bytes prove the
+	// browser's fast-path ≠ was a false positive, while equal
+	// lines over differing bytes mean a line-ending-only pair the
+	// line view cannot display.
+	if !fd.Truncated {
+		fd.SameBytes = lt == rt
+		if !fd.SameBytes {
+			normL := strings.ReplaceAll(lt, "\r\n", "\n")
+			normR := strings.ReplaceAll(rt, "\r\n", "\n")
+			fd.LineEndingOnly = normL == normR
+		}
+	}
 	_ = rb
 	return fd, nil
 }
@@ -429,17 +452,22 @@ func readCapped(p string) (text string, head []byte, truncated bool, err error) 
 	}
 	defer f.Close()
 	buf := make([]byte, MaxFileBytes+1)
-	n, err := f.Read(buf)
-	if err != nil && n == 0 {
-		// Empty file: Read returns EOF with n=0; treat as empty, not error.
-		if len(buf[:n]) == 0 {
-			return "", buf[:0], false, nil
-		}
-		return "", nil, false, err
-	}
-	if n > MaxFileBytes {
+	// ReadFull (not a single Read, which may return short counts) so
+	// the text, Truncated, and SameBytes signals describe the whole file.
+	n, err := io.ReadFull(f, buf)
+	switch err {
+	case nil:
+		// Buffer filled: the file is larger than the cap.
 		truncated = true
 		n = MaxFileBytes
+	case io.EOF:
+		// Empty file.
+		return "", buf[:0], false, nil
+	case io.ErrUnexpectedEOF:
+		// File smaller than the cap: n holds the full content.
+		err = nil
+	default:
+		return "", nil, false, err
 	}
 	head = buf[:min(n, 8192)]
 	text = string(buf[:n])

@@ -148,9 +148,49 @@ func TestAppStaysInBrowserWhenIdentical(t *testing.T) {
 	m, cmd := app.Update(scanDoneMsg{entries: entries})
 	app = m.(*App)
 	if cmd != nil {
-		t.Fatal("no differing files: should not auto-open")
+		t.Fatal("no differing files: should stay in browser")
 	}
 	if app.Active() != ViewBrowser {
 		t.Fatal("should stay in browser when trees are identical")
+	}
+}
+
+func TestAppDiffOpenMarksBrowserIdentical(t *testing.T) {
+	app := NewApp("L", "R", compare.DefaultOptions(), 3)
+	app.browser.SetEntries([]compare.Entry{
+		{Rel: "f.txt", State: compare.StateDifferent,
+			Left: &compare.FileMeta{AbsPath: "/l/f.txt"}, Right: &compare.FileMeta{AbsPath: "/r/f.txt"}},
+	})
+	// Same lines, and the loader verified the raw bytes are equal
+	// (e.g. same size, mtime-only browser flag).
+	fd := diff.Compute([]string{"a"}, []string{"a"}, false, 3)
+	fd.SameBytes = true
+	m, _ := app.Update(diffDoneMsg{rel: "f.txt", leftPath: "/l/f.txt", rightPath: "/r/f.txt", fd: fd})
+	app = m.(*App)
+	var got *compare.Entry
+	for i := range app.Browser().All {
+		if app.Browser().All[i].Rel == "f.txt" {
+			got = &app.Browser().All[i]
+		}
+	}
+	if got == nil || got.State != compare.StateIdentical {
+		t.Fatalf("byte-identical diff should correct browser row, got %+v", got)
+	}
+	if app.Browser().StatusMsg != "f.txt: contents identical" {
+		t.Fatalf("unexpected status %q", app.Browser().StatusMsg)
+	}
+}
+
+func TestAppDiffOpenKeepsDifferentWhenBytesDiffer(t *testing.T) {
+	app := NewApp("L", "R", compare.DefaultOptions(), 3)
+	app.browser.SetEntries([]compare.Entry{
+		{Rel: "f.txt", State: compare.StateDifferent,
+			Left: &compare.FileMeta{AbsPath: "/l/f.txt"}, Right: &compare.FileMeta{AbsPath: "/r/f.txt"}},
+	})
+	fd := diff.Compute([]string{"a"}, []string{"b"}, false, 3)
+	m, _ := app.Update(diffDoneMsg{rel: "f.txt", leftPath: "/l/f.txt", rightPath: "/r/f.txt", fd: fd})
+	app = m.(*App)
+	if got := app.Browser().All[0]; got.State != compare.StateDifferent {
+		t.Fatalf("differing content must stay different, got %+v", got)
 	}
 }

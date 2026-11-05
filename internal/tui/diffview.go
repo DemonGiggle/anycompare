@@ -286,9 +286,14 @@ func (d *DiffView) Render() string {
 		sb.WriteString(styleSubHeader.Render(truncateRunes("note: file truncated at 10 MiB", w)) + "\n")
 	} else {
 		hunkBar := ""
-		if len(fd.Hunks) > 0 && d.HunkIdx < len(fd.Hunks) {
+		switch {
+		case len(fd.Hunks) > 0 && d.HunkIdx < len(fd.Hunks):
 			hunkBar = fd.Hunks[d.HunkIdx].Header()
-		} else {
+		case fd.LineEndingOnly:
+			// Bytes differ but the line view normalizes CRLF away,
+			// so never claim "identical" here.
+			hunkBar = "line endings differ (CRLF vs LF)"
+		default:
 			hunkBar = "files identical"
 		}
 		sb.WriteString(styleHunkHeader.Render(truncateRunes(hunkBar, w)) + "\n")

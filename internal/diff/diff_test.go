@@ -1,6 +1,10 @@
 package diff
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestComputeIdentical(t *testing.T) {
 	fd := Compute([]string{"a", "b"}, []string{"a", "b"}, false, 3)
@@ -53,5 +57,65 @@ func TestSplitLinesCRLF(t *testing.T) {
 	lines := SplitLines("a\r\nb\r\n")
 	if len(lines) != 3 { // trailing newline yields final empty element
 		t.Fatalf("lines=%q", lines)
+	}
+}
+
+func writeTempFile(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "f.txt")
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestLoadPairSameBytes(t *testing.T) {
+	l := writeTempFile(t, "a\nb\n")
+	r := writeTempFile(t, "a\nb\n")
+	fd, err := LoadPair("f.txt", l, r, false, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fd.Hunks) != 0 {
+		t.Fatalf("identical files should have no hunks, got %d", len(fd.Hunks))
+	}
+	if !fd.SameBytes {
+		t.Fatal("identical files should report SameBytes")
+	}
+	if fd.LineEndingOnly {
+		t.Fatal("identical files should not report LineEndingOnly")
+	}
+}
+
+func TestLoadPairLineEndingOnly(t *testing.T) {
+	l := writeTempFile(t, "a\nb\n")
+	r := writeTempFile(t, "a\r\nb\r\n")
+	fd, err := LoadPair("f.txt", l, r, false, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fd.Hunks) != 0 {
+		t.Fatalf("CRLF pair shows no line hunks, got %d", len(fd.Hunks))
+	}
+	if fd.SameBytes {
+		t.Fatal("CRLF pair must not report SameBytes")
+	}
+	if !fd.LineEndingOnly {
+		t.Fatal("CRLF pair should report LineEndingOnly")
+	}
+}
+
+func TestLoadPairRealDiff(t *testing.T) {
+	l := writeTempFile(t, "a\n")
+	r := writeTempFile(t, "b\n")
+	fd, err := LoadPair("f.txt", l, r, false, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fd.Hunks) == 0 {
+		t.Fatal("changed files should have hunks")
+	}
+	if fd.SameBytes || fd.LineEndingOnly {
+		t.Fatalf("changed files must not report SameBytes/LineEndingOnly: %+v", fd)
 	}
 }
