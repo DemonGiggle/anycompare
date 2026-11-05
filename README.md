@@ -1,6 +1,9 @@
 # anycompare
 
-[![ci](https://github.com/DemonGiggle/anycompare/actions/workflows/ci.yml/badge.svg)](https://github.com/DemonGiggle/anycompare/actions)
+[![ci](https://github.com/DemonGiggle/anycompare/actions/workflows/ci.yml/badge.svg)](https://github.com/DemonGiggle/anycompare/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/DemonGiggle/anycompare)](https://github.com/DemonGiggle/anycompare/releases)
+[![go](https://img.shields.io/github/go-mod/go-version/DemonGiggle/anycompare)](https://go.dev/)
+[![license](https://img.shields.io/github/license/DemonGiggle/anycompare)](LICENSE)
 
 **Spot every difference between two directories — side by side, from your terminal.**
 
