@@ -11,8 +11,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/anycompare/anycompare/internal/compare"
-	"github.com/anycompare/anycompare/internal/tui"
+	"github.com/DemonGiggle/anycompare/internal/compare"
+	"github.com/DemonGiggle/anycompare/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anycompare/anycompare/internal/compare"
-	"github.com/anycompare/anycompare/internal/diff"
+	"github.com/DemonGiggle/anycompare/internal/compare"
+	"github.com/DemonGiggle/anycompare/internal/diff"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 )

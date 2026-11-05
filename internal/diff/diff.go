@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/anycompare/anycompare/internal/compare"
+	"github.com/DemonGiggle/anycompare/internal/compare"
 )
 
 const (

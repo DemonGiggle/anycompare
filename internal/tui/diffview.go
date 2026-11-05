@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/anycompare/anycompare/internal/diff"
+	"github.com/DemonGiggle/anycompare/internal/diff"
 	"github.com/charmbracelet/lipgloss"
 )
 
