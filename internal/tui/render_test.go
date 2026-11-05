@@ -122,7 +122,7 @@ func TestDiffHunkKeysAndModeCoordinates(t *testing.T) {
 		if d.Offset != next || d.HunkIdx != 1 {
 			t.Fatal("]c must jump exactly once to the second hunk")
 		}
-		if mode == ModeUnified && d.unifiedLines()[d.Offset].hdr != d.FD.Hunks[1].Header() {
+		if mode == ModeUnified && d.unifiedLines()[d.Offset].hdr != chunkLabel(d.FD.Hunks, 1) {
 			t.Fatal("unified jump used a side-by-side row offset")
 		}
 		app.updateDiffKey("[")
@@ -184,6 +184,49 @@ func TestDiffViewLineEndingBanner(t *testing.T) {
 		t.Fatalf("must not claim identical for CRLF pair in:\n%s", out)
 	}
 	assertFrame(t, out, 80, 24)
+}
+
+func TestHunkChunkNotation(t *testing.T) {
+	left := []string{"a", "b", "c", "d", "e", "f", "g"}
+	right := []string{"a", "X", "c", "d", "e", "Y", "g"}
+	d := NewDiffView()
+	d.SetSize(100, 20)
+	d.SetDiff("f.txt", "L", "R", diff.Compute(left, right, false, 1))
+	if len(d.FD.Hunks) != 2 {
+		t.Fatalf("hunks=%d want 2", len(d.FD.Hunks))
+	}
+	// Side-by-side hunk bar carries the chunk number.
+	if out := d.Render(); !strings.Contains(out, "[1/2] @@") {
+		t.Fatalf("missing [1/2] chunk notation in:\n%s", out)
+	}
+	d.NextHunk()
+	if out := d.Render(); !strings.Contains(out, "[2/2] @@") {
+		t.Fatalf("notation did not follow n jump in:\n%s", out)
+	}
+	d.PrevHunk()
+	if out := d.Render(); !strings.Contains(out, "[1/2] @@") {
+		t.Fatalf("notation did not follow N jump in:\n%s", out)
+	}
+	// Unified inline headers carry it too.
+	d.ToggleMode()
+	var hdrs []string
+	for _, ul := range d.unifiedLines() {
+		if ul.hdr != "" {
+			hdrs = append(hdrs, ul.hdr)
+		}
+	}
+	for _, want := range []string{"[1/2] @@", "[2/2] @@"} {
+		seen := false
+		for _, hdr := range hdrs {
+			if strings.Contains(hdr, want) {
+				seen = true
+			}
+		}
+		if !seen {
+			t.Fatalf("missing unified %q in %q", want, hdrs)
+		}
+	}
+	assertFrame(t, d.Render(), 100, 20)
 }
 
 func TestBottomShowsLastPage(t *testing.T) {

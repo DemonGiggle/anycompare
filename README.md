@@ -22,7 +22,8 @@ anycompare [flags] <source-dir> <dest-dir>
   (same idea as Beyond Compare / Meld folder comparison).
 - **ENTER opens a vimdiff-style diff:** side-by-side panes scrolling together,
   change background plus intra-line highlight of the changed segment,
-  hunk header (`@@ -a,b +c,d @@`), `]c` / `[c` (also `n`/`N`, `]`/`[`) hunk jumps,
+  numbered hunk headers (`[1/2] @@ -a,b +c,d @@`),
+  `]c` / `[c` (also `n`/`N`, `]`/`[`) hunk jumps,
   `d` toggles side-by-side vs unified (`diff -u`), `w` ignores whitespace,
   `+`/`-` changes context, `b` forces binary-as-text, `esc` returns to the
   browser with cursor/filter preserved.

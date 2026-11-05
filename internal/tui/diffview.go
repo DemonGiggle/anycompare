@@ -288,7 +288,7 @@ func (d *DiffView) Render() string {
 		hunkBar := ""
 		switch {
 		case len(fd.Hunks) > 0 && d.HunkIdx < len(fd.Hunks):
-			hunkBar = fd.Hunks[d.HunkIdx].Header()
+			hunkBar = chunkLabel(fd.Hunks, d.HunkIdx)
 		case fd.LineEndingOnly:
 			// Bytes differ but the line view normalizes CRLF away,
 			// so never claim "identical" here.
@@ -321,6 +321,15 @@ func hunkOneBased(d *DiffView) int {
 		return 0
 	}
 	return d.HunkIdx + 1
+}
+
+// chunkLabel numbers one hunk for n/N navigation, e.g.
+// "[2/5] @@ -12,3 +12,4 @@", so each jump lands on a labeled chunk.
+func chunkLabel(hunks []diff.Hunk, idx int) string {
+	if idx < 0 || idx >= len(hunks) {
+		return ""
+	}
+	return fmt.Sprintf("[%d/%d]%s", idx+1, len(hunks), hunks[idx].Header())
 }
 
 func wsFlag(ignore bool) string {
@@ -430,8 +439,8 @@ func (d *DiffView) unifiedLines() []unifiedLine {
 	if d.FD == nil {
 		return out
 	}
-	for _, h := range d.FD.Hunks {
-		out = append(out, unifiedLine{hdr: h.Header(), row: h.RowStart})
+	for hi, h := range d.FD.Hunks {
+		out = append(out, unifiedLine{hdr: chunkLabel(d.FD.Hunks, hi), row: h.RowStart})
 		for i := h.RowStart; i < h.RowEnd; i++ {
 			r := d.FD.Rows[i]
 			switch r.Kind {
